@@ -1,77 +1,149 @@
-﻿using System;
+﻿using System.Collections.Generic;
 using NRules.RuleModel;
 
 namespace NRules.Rete
 {
     internal class AggregateNode : BetaNode
     {
-        private readonly Func<IAggregate> _aggregateFactory;
+        private readonly string _name;
+        private readonly ExpressionMap _expressionMap;
+        private readonly IAggregatorFactory _aggregatorFactory;
+        private readonly bool _isSubnetJoin;
 
-        public Type AggregateType { get; private set; }
+        public string Name { get { return _name; } }
 
-        public AggregateNode(ITupleSource leftSource, IObjectSource rightSource, Type aggregateType)
+        public ExpressionMap ExpressionMap
+        {
+            get { return _expressionMap; }
+        }
+
+        public AggregateNode(ITupleSource leftSource, IObjectSource rightSource, string name, ExpressionMap expressionMap, IAggregatorFactory aggregatorFactory, bool isSubnetJoin)
             : base(leftSource, rightSource)
         {
-            AggregateType = aggregateType;
-            _aggregateFactory = () => (IAggregate) Activator.CreateInstance(aggregateType);
+            _name = name;
+            _expressionMap = expressionMap;
+            _aggregatorFactory = aggregatorFactory;
+            _isSubnetJoin = isSubnetJoin;
         }
 
-        public override void PropagateAssert(IExecutionContext context, Tuple tuple)
+        public override void PropagateAssert(IExecutionContext context, IList<Tuple> tuples)
         {
-            IAggregate aggregate = GetAggregate(tuple);
-            var matchingFacts = MatchingFacts(context, tuple);
-            foreach (var matchingFact in matchingFacts)
+            var joinedSets = JoinedSets(context, tuples);
+            var aggregation = new Aggregation();
+            foreach (var set in joinedSets)
             {
-                var result = aggregate.Add(matchingFact.Object);
-                HandleAggregateResult(context, result, tuple, aggregate);
+                var factObjects = new List<object>();
+                foreach (var fact in set.Facts)
+                {
+                    if (MatchesConditions(context, set.Tuple, fact))
+                        factObjects.Add(fact.Object);
+                }
+                IAggregator aggregator = CreateAggregator(set.Tuple);
+                var results = aggregator.Add(factObjects);
+                aggregation.Add(set.Tuple, results);
             }
+            PropagateAggregation(context, aggregation);
         }
 
-        public override void PropagateUpdate(IExecutionContext context, Tuple tuple)
+        public override void PropagateUpdate(IExecutionContext context, IList<Tuple> tuples)
         {
-            IAggregate aggregate = GetAggregate(tuple);
-            Fact aggregateFact = context.WorkingMemory.GetFact(aggregate.Result);
-            PropagateAggregateUpdate(context, tuple, aggregateFact);
-        }
+            if (_isSubnetJoin) return;
 
-        public override void PropagateRetract(IExecutionContext context, Tuple tuple)
-        {
-            IAggregate aggregate = GetAggregate(tuple);
-            Fact aggregateFact = context.WorkingMemory.GetFact(aggregate.Result);
-            PropagateAggregateRetract(context, tuple, aggregateFact);
-        }
-
-        public override void PropagateAssert(IExecutionContext context, Fact fact)
-        {
-            var tuples = MatchingTuples(context, fact);
+            var toUpdate = new TupleFactList();
             foreach (var tuple in tuples)
             {
-                IAggregate aggregate = GetAggregate(tuple);
-                var result = aggregate.Add(fact.Object);
-                HandleAggregateResult(context, result, tuple, aggregate);
+                IAggregator aggregator = GetAggregator(tuple);
+                foreach (var aggregate in aggregator.Aggregates)
+                {
+                    Fact aggregateFact = ToAggregateFact(context, aggregate);
+                    toUpdate.Add(tuple, aggregateFact);
+                }
             }
+            MemoryNode.PropagateUpdate(context, toUpdate);
         }
 
-        public override void PropagateUpdate(IExecutionContext context, Fact fact)
+        public override void PropagateRetract(IExecutionContext context, IList<Tuple> tuples)
         {
-            var tuples = MatchingTuples(context, fact);
+            var toRetract = new TupleFactList();
             foreach (var tuple in tuples)
             {
-                IAggregate aggregate = GetAggregate(tuple);
-                var result = aggregate.Modify(fact.Object);
-                HandleAggregateResult(context, result, tuple, aggregate);
+                IAggregator aggregator = GetAggregator(tuple);
+                foreach (var aggregate in aggregator.Aggregates)
+                {
+                    Fact aggregateFact = ToAggregateFact(context, aggregate);
+                    toRetract.Add(tuple, aggregateFact);
+                }
             }
+            MemoryNode.PropagateRetract(context, toRetract);
         }
 
-        public override void PropagateRetract(IExecutionContext context, Fact fact)
+        public override void PropagateAssert(IExecutionContext context, IList<Fact> facts)
         {
-            var tuples = MatchingTuples(context, fact);
-            foreach (var tuple in tuples)
+            var joinedSets = JoinedSets(context, facts);
+            var aggregation = new Aggregation();
+            foreach (var set in joinedSets)
             {
-                IAggregate aggregate = GetAggregate(tuple);
-                var result = aggregate.Remove(fact.Object);
-                HandleAggregateResult(context, result, tuple, aggregate);
+                if (set.Facts.Count == 0) continue;
+                var factObjects = new List<object>();
+                foreach (var fact in set.Facts)
+                {
+                    if (MatchesConditions(context, set.Tuple, fact))
+                        factObjects.Add(fact.Object);
+                }
+                if (factObjects.Count > 0)
+                {
+                    IAggregator aggregator = GetAggregator(set.Tuple);
+                    var results = aggregator.Add(factObjects);
+                    aggregation.Add(set.Tuple, results);
+                }
             }
+            PropagateAggregation(context, aggregation);
+        }
+
+        public override void PropagateUpdate(IExecutionContext context, IList<Fact> facts)
+        {
+            var joinedSets = JoinedSets(context, facts);
+            var aggregation = new Aggregation();
+            foreach (var set in joinedSets)
+            {
+                if (set.Facts.Count == 0) continue;
+                var factObjects = new List<object>();
+                foreach (var fact in set.Facts)
+                {
+                    if (MatchesConditions(context, set.Tuple, fact))
+                        factObjects.Add(fact.Object);
+                }
+                if (factObjects.Count > 0)
+                {
+                    IAggregator aggregator = GetAggregator(set.Tuple);
+                    var results = aggregator.Modify(factObjects);
+                    aggregation.Add(set.Tuple, results);
+                }
+            }
+            PropagateAggregation(context, aggregation);
+        }
+
+        public override void PropagateRetract(IExecutionContext context, IList<Fact> facts)
+        {
+            var joinedSets = JoinedSets(context, facts);
+            var aggregation = new Aggregation();
+            foreach (var set in joinedSets)
+            {
+                if (set.Facts.Count == 0) continue;
+                var factObjects = new List<object>();
+                foreach (var fact in set.Facts)
+                {
+                    if (MatchesConditions(context, set.Tuple, fact))
+                        factObjects.Add(fact.Object);
+                }
+                if (factObjects.Count > 0)
+                {
+                    IAggregator aggregator = GetAggregator(set.Tuple);
+                    var results = aggregator.Remove(factObjects);
+                    aggregation.Add(set.Tuple, results);
+                }
+            }
+            PropagateAggregation(context, aggregation);
         }
 
         public override void Accept<TContext>(TContext context, ReteNodeVisitor<TContext> visitor)
@@ -79,66 +151,85 @@ namespace NRules.Rete
             visitor.VisitAggregateNode(context, this);
         }
 
-        private void HandleAggregateResult(IExecutionContext context, AggregationResults result, Tuple leftTuple, IAggregate aggregate)
+        private void PropagateAggregation(IExecutionContext context, Aggregation aggregation)
         {
-            Fact aggregateFact = GetAggregateFact(context, aggregate);
-            switch (result)
+            PropagateAggregateRetracts(context, aggregation);
+            PropagateAggregateAsserts(context, aggregation);
+            PropagateAggregateUpdates(context, aggregation);
+        }
+
+        private void PropagateAggregateAsserts(IExecutionContext context, Aggregation aggregation)
+        {
+            var asserts = new TupleFactList();
+            foreach (var assert in aggregation.Asserts)
             {
-                case AggregationResults.Added:
-                    PropagateAggregateAssert(context, leftTuple, aggregateFact);
-                    break;
-                case AggregationResults.Modified:
-                    PropagateAggregateUpdate(context, leftTuple, aggregateFact);
-                    break;
-                case AggregationResults.Removed:
-                    PropagateAggregateRetract(context, leftTuple, aggregateFact);
-                    break;
+                var fact = ToAggregateFact(context, assert.ResultObject);
+                asserts.Add(assert.Tuple, fact);
+            }
+            if (asserts.Count > 0)
+            {
+                MemoryNode.PropagateAssert(context, asserts);
             }
         }
 
-        private void PropagateAggregateAssert(IExecutionContext context, Tuple tuple, Fact aggregateFact)
+        private void PropagateAggregateUpdates(IExecutionContext context, Aggregation aggregation)
         {
-            if (aggregateFact != null)
+            var updates = new TupleFactList();
+            foreach (var update in aggregation.Updates)
             {
-                MemoryNode.PropagateAssert(context, tuple, aggregateFact);
+                var fact = ToAggregateFact(context, update.ResultObject);
+                updates.Add(update.Tuple, fact);
+            }
+            if (updates.Count > 0)
+            {
+                MemoryNode.PropagateUpdate(context, updates);
             }
         }
 
-        private void PropagateAggregateUpdate(IExecutionContext context, Tuple tuple, Fact aggregateFact)
+        private void PropagateAggregateRetracts(IExecutionContext context, Aggregation aggregation)
         {
-            if (aggregateFact != null)
+            var retracts = new TupleFactList();
+            foreach (var retract in aggregation.Retracts)
             {
-                MemoryNode.PropagateUpdate(context, tuple, aggregateFact);
+                var fact = ToAggregateFact(context, retract.ResultObject);
+                retracts.Add(retract.Tuple, fact);
+            }
+            if (retracts.Count > 0)
+            {
+                MemoryNode.PropagateRetract(context, retracts);
+                var enumerator = retracts.GetEnumerator();
+                while (enumerator.MoveNext())
+                {
+                    context.WorkingMemory.RemoveInternalFact(this, enumerator.CurrentFact);
+                }
             }
         }
 
-        private void PropagateAggregateRetract(IExecutionContext context, Tuple tuple, Fact aggregateFact)
+        private IAggregator GetAggregator(Tuple tuple)
         {
-            if (aggregateFact != null)
-            {
-                MemoryNode.PropagateRetract(context, tuple, aggregateFact);
-            }
-        }
-        
-        private IAggregate GetAggregate(Tuple tuple)
-        {
-            var aggregate = tuple.GetState<IAggregate>(this);
-            if (aggregate == null)
-            {
-                aggregate = _aggregateFactory();
-                tuple.SetState(this, aggregate);
-            }
-            return aggregate;
+            var aggregator = tuple.GetState<IAggregator>(this);
+            return aggregator;
         }
 
-        private Fact GetAggregateFact(IExecutionContext context, IAggregate aggregate)
+        private IAggregator CreateAggregator(Tuple tuple)
         {
-            if (aggregate.Result == null) return null;
-            Fact fact = context.WorkingMemory.GetFact(aggregate.Result);
+            var aggregator = _aggregatorFactory.Create();
+            tuple.SetState(this, aggregator);
+            return aggregator;
+        }
+
+        private Fact ToAggregateFact(IExecutionContext context, object aggregate)
+        {
+            Fact fact = context.WorkingMemory.GetInternalFact(this, aggregate);
             if (fact == null)
             {
-                fact = new Fact(aggregate.Result);
-                context.WorkingMemory.SetFact(fact);
+                fact = new Fact(aggregate);
+                context.WorkingMemory.AddInternalFact(this, fact);
+            }
+            else if (!ReferenceEquals(fact.RawObject, aggregate))
+            {
+                fact.RawObject = aggregate;
+                context.WorkingMemory.UpdateInternalFact(this, fact);
             }
             return fact;
         }

@@ -12,26 +12,26 @@ namespace NRules.Rete
     internal class BetaCondition : IBetaCondition, IEquatable<BetaCondition>
     {
         private readonly LambdaExpression _expression;
-        private readonly FactIndexMap _conditionFactMap;
+        private readonly IndexMap _factIndexMap;
         private readonly FastDelegate<Func<object[], bool>> _compiledExpression;
 
-        public BetaCondition(LambdaExpression expression, FactIndexMap conditionFactMap)
+        public BetaCondition(LambdaExpression expression, IndexMap factIndexMap)
         {
             _expression = expression;
-            _conditionFactMap = conditionFactMap;
-            _compiledExpression = FastDelegate.Create<Func<object[], bool>>(expression);
+            _factIndexMap = factIndexMap;
+            _compiledExpression = FastDelegate.BetaCondition(expression);
         }
 
         public bool IsSatisfiedBy(IExecutionContext context, Tuple leftTuple, Fact rightFact)
         {
-            var args = new object[_compiledExpression.ParameterCount];
+            var args = new object[_compiledExpression.ArrayArgumentCount];
             int index = leftTuple.Count - 1;
             foreach (var fact in leftTuple.Facts)
             {
-                FactIndexMap.SetElementAt(ref args, _conditionFactMap.Map(index), 0, fact.Object);
+                IndexMap.SetElementAt(args, _factIndexMap[index], fact.Object);
                 index--;
             }
-            FactIndexMap.SetElementAt(ref args, _conditionFactMap.Map(leftTuple.Count), 0, rightFact.Object);
+            IndexMap.SetElementAt(args, _factIndexMap[leftTuple.Count], rightFact.Object);
 
             try
             {
@@ -39,8 +39,13 @@ namespace NRules.Rete
             }
             catch (Exception e)
             {
-                context.EventAggregator.RaiseConditionFailed(context.Session, e, _expression, leftTuple, rightFact);
-                throw new RuleConditionEvaluationException("Failed to evaluate condition", _expression.ToString(), e);
+                bool isHandled = false;
+                context.EventAggregator.RaiseConditionFailed(context.Session, e, _expression, leftTuple, rightFact, ref isHandled);
+                if (!isHandled)
+                {
+                    throw new RuleConditionEvaluationException("Failed to evaluate condition", _expression.ToString(), e);
+                }
+                return false;
             }
         }
 

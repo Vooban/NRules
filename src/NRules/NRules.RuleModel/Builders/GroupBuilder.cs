@@ -22,7 +22,7 @@ namespace NRules.RuleModel.Builders
     /// <summary>
     /// Builder to compose a group element.
     /// </summary>
-    public class GroupBuilder : RuleElementBuilder, IBuilder<GroupElement>
+    public class GroupBuilder : RuleElementBuilder, IBuilder<GroupElement>, IPatternContainerBuilder
     {
         private readonly GroupType _groupType;
         private readonly List<IBuilder<RuleLeftElement>> _nestedBuilders = new List<IBuilder<RuleLeftElement>>();
@@ -132,13 +132,13 @@ namespace NRules.RuleModel.Builders
                 case GroupType.And:
                     if (_nestedBuilders.Count < 1)
                     {
-                        throw new InvalidOperationException("Group condition AND requires at least one child element");
+                        throw new InvalidOperationException("Group element AND requires at least one child element");
                     }
                     break;
                 case GroupType.Or:
                     if (_nestedBuilders.Count < 1)
                     {
-                        throw new InvalidOperationException("Group condition OR requires at least one child element");
+                        throw new InvalidOperationException("Group element OR requires at least one child element");
                     }
                     break;
             }

@@ -16,6 +16,8 @@ namespace NRules.RuleModel.Builders
         private int _priority = RuleDefinition.DefaultPriority;
         private RuleRepeatability _repeatability = RuleDefinition.DefaultRepeatability;
         private readonly List<string> _tags = new List<string>();
+        private readonly List<RuleProperty> _properties = new List<RuleProperty>();
+        private readonly DependencyGroupBuilder _dependencyBuilder;
         private readonly GroupBuilder _groupBuilder;
         private readonly ActionGroupBuilder _actionGroupBuilder;
 
@@ -25,6 +27,7 @@ namespace NRules.RuleModel.Builders
         public RuleBuilder()
         {
             var rootScope = new SymbolTable();
+            _dependencyBuilder = new DependencyGroupBuilder(rootScope);
             _groupBuilder = new GroupBuilder(rootScope, GroupType.And);
             _actionGroupBuilder = new ActionGroupBuilder(rootScope);
         }
@@ -48,12 +51,41 @@ namespace NRules.RuleModel.Builders
         }
 
         /// <summary>
-        /// Sets rule's tags.
+        /// Adds rule's tags.
         /// </summary>
         /// <param name="tags">Rule tag values.</param>
         public void Tags(IEnumerable<string> tags)
         {
             _tags.AddRange(tags);
+        }
+
+        /// <summary>
+        /// Adds rule's tag.
+        /// </summary>
+        /// <param name="tag">Rule tag value.</param>
+        public void Tag(string tag)
+        {
+            _tags.Add(tag);
+        }
+
+        /// <summary>
+        /// Adds rule's properties.
+        /// </summary>
+        /// <param name="properties">Rule property.</param>
+        public void Properties(IEnumerable<RuleProperty> properties)
+        {
+            _properties.AddRange(properties);
+        }
+
+        /// <summary>
+        /// Adds rule's property.
+        /// </summary>
+        /// <param name="name">Property name.</param>
+        /// <param name="value">Property value.</param>
+        public void Property(string name, object value)
+        {
+            var property = new RuleProperty(name, value);
+            _properties.Add(property);
         }
 
         /// <summary>
@@ -73,6 +105,15 @@ namespace NRules.RuleModel.Builders
         public void Repeatability(RuleRepeatability repeatability)
         {
             _repeatability = repeatability;
+        }
+
+        /// <summary>
+        /// Retrieves dependencies builder.
+        /// </summary>
+        /// <returns>Left hand side builder.</returns>
+        public DependencyGroupBuilder Dependencies()
+        {
+            return _dependencyBuilder;
         }
 
         /// <summary>
@@ -101,13 +142,16 @@ namespace NRules.RuleModel.Builders
         {
             Validate();
 
+            IBuilder<DependencyGroupElement> dependencyBuilder = _dependencyBuilder;
+            DependencyGroupElement dependencies = dependencyBuilder.Build();
+
             IBuilder<GroupElement> groupBuilder = _groupBuilder;
             GroupElement conditions = groupBuilder.Build();
 
             IBuilder<ActionGroupElement> actionBuilder = _actionGroupBuilder;
             ActionGroupElement actions = actionBuilder.Build();
 
-            var ruleDefinition = new RuleDefinition(_name, _description, _priority, _repeatability, _tags, conditions, actions);
+            var ruleDefinition = new RuleDefinition(_name, _description, _priority, _repeatability, _tags, _properties, dependencies, conditions, actions);
             return ruleDefinition;
         }
 

@@ -1,5 +1,6 @@
 using System;
 using System.Linq.Expressions;
+using NRules.Extensibility;
 using NRules.Rete;
 using Tuple = NRules.Rete.Tuple;
 
@@ -16,6 +17,14 @@ namespace NRules.Diagnostics
         /// The activation is placed on the agenda and becomes a candidate for firing.
         /// </summary>
         event EventHandler<AgendaEventArgs> ActivationCreatedEvent;
+
+        /// <summary>
+        /// Raised when an existing activation is updated.
+        /// An activation is updated when a previously matching set of facts (tuple) is updated 
+        /// and it still matches the rule.
+        /// The activation is updated in the agenda and remains a candidate for firing.
+        /// </summary>
+        event EventHandler<AgendaEventArgs> ActivationUpdatedEvent;
 
         /// <summary>
         /// Raised when an existing activation is deleted.
@@ -68,6 +77,7 @@ namespace NRules.Diagnostics
         /// <summary>
         /// Raised when action execution threw an exception.
         /// Gives observer of the event control over handling of the exception.
+        /// <remarks>This event is not raised when actions are invoked via <see cref="IActionInterceptor"/>.</remarks>
         /// </summary>
         event EventHandler<ActionErrorEventArgs> ActionFailedEvent;
 
@@ -79,18 +89,19 @@ namespace NRules.Diagnostics
 
     internal interface IEventAggregator : IEventProvider
     {
-        void RaiseActivationCreated(ISession session, Activation activation);
-        void RaiseActivationDeleted(ISession session, Activation activation);
-        void RaiseRuleFiring(ISession session, Activation activation);
-        void RaiseRuleFired(ISession session, Activation activation);
+        void RaiseActivationCreated(ISession session, IActivation activation);
+        void RaiseActivationUpdated(ISession session, IActivation activation);
+        void RaiseActivationDeleted(ISession session, IActivation activation);
+        void RaiseRuleFiring(ISession session, IActivation activation);
+        void RaiseRuleFired(ISession session, IActivation activation);
         void RaiseFactInserting(ISession session, Fact fact);
         void RaiseFactInserted(ISession session, Fact fact);
         void RaiseFactUpdating(ISession session, Fact fact);
         void RaiseFactUpdated(ISession session, Fact fact);
         void RaiseFactRetracting(ISession session, Fact fact);
         void RaiseFactRetracted(ISession session, Fact fact);
-        void RaiseActionFailed(ISession session, Exception exception, Expression expression, Tuple tuple, out bool isHandled);
-        void RaiseConditionFailed(ISession session, Exception exception, Expression expression, Tuple tuple, Fact fact);
+        void RaiseActionFailed(ISession session, Exception exception, Expression expression, IActivation activation, ref bool isHandled);
+        void RaiseConditionFailed(ISession session, Exception exception, Expression expression, Tuple tuple, Fact fact, ref bool isHandled);
     }
 
     internal class EventAggregator : IEventAggregator
@@ -98,6 +109,7 @@ namespace NRules.Diagnostics
         private readonly IEventAggregator _parent;
 
         public event EventHandler<AgendaEventArgs> ActivationCreatedEvent;
+        public event EventHandler<AgendaEventArgs> ActivationUpdatedEvent;
         public event EventHandler<AgendaEventArgs> ActivationDeletedEvent;
         public event EventHandler<AgendaEventArgs> RuleFiringEvent;
         public event EventHandler<AgendaEventArgs> RuleFiredEvent;
@@ -119,12 +131,12 @@ namespace NRules.Diagnostics
             _parent = eventAggregator;
         }
 
-        public void RaiseActivationCreated(ISession session, Activation activation)
+        public void RaiseActivationCreated(ISession session, IActivation activation)
         {
             var handler = ActivationCreatedEvent;
             if (handler != null)
             {
-                var @event = new AgendaEventArgs(activation.Rule, activation.Tuple);
+                var @event = new AgendaEventArgs(activation);
                 handler(session, @event);
             }
             if (_parent != null)
@@ -133,12 +145,26 @@ namespace NRules.Diagnostics
             }
         }
 
-        public void RaiseActivationDeleted(ISession session, Activation activation)
+        public void RaiseActivationUpdated(ISession session, IActivation activation)
+        {
+            var handler = ActivationUpdatedEvent;
+            if (handler != null)
+            {
+                var @event = new AgendaEventArgs(activation);
+                handler(session, @event);
+            }
+            if (_parent != null)
+            {
+                _parent.RaiseActivationUpdated(session, activation);
+            }
+        }
+
+        public void RaiseActivationDeleted(ISession session, IActivation activation)
         {
             var handler = ActivationDeletedEvent;
             if (handler != null)
             {
-                var @event = new AgendaEventArgs(activation.Rule, activation.Tuple);
+                var @event = new AgendaEventArgs(activation);
                 handler(session, @event);
             }
             if (_parent != null)
@@ -147,12 +173,12 @@ namespace NRules.Diagnostics
             }
         }
 
-        public void RaiseRuleFiring(ISession session, Activation activation)
+        public void RaiseRuleFiring(ISession session, IActivation activation)
         {
             var handler = RuleFiringEvent;
             if (handler != null)
             {
-                var @event = new AgendaEventArgs(activation.Rule, activation.Tuple);
+                var @event = new AgendaEventArgs(activation);
                 handler(session, @event);
             }
             if (_parent != null)
@@ -161,12 +187,12 @@ namespace NRules.Diagnostics
             }
         }
 
-        public void RaiseRuleFired(ISession session, Activation activation)
+        public void RaiseRuleFired(ISession session, IActivation activation)
         {
             var handler = RuleFiredEvent;
             if (handler != null)
             {
-                var @event = new AgendaEventArgs(activation.Rule, activation.Tuple);
+                var @event = new AgendaEventArgs(activation);
                 handler(session, @event);
             }
             if (_parent != null)
@@ -259,33 +285,33 @@ namespace NRules.Diagnostics
             }
         }
 
-        public void RaiseActionFailed(ISession session, Exception exception, Expression expression, Tuple tuple, out bool isHandled)
+        public void RaiseActionFailed(ISession session, Exception exception, Expression expression, IActivation activation, ref bool isHandled)
         {
-            isHandled = false;
             var handler = ActionFailedEvent;
             if (handler != null)
             {
-                var @event = new ActionErrorEventArgs(exception, expression, tuple);
+                var @event = new ActionErrorEventArgs(exception, expression, activation);
                 handler(session, @event);
-                isHandled = @event.IsHandled;
+                isHandled |= @event.IsHandled;
             }
-            if (_parent != null && !isHandled)
+            if (_parent != null)
             {
-                _parent.RaiseActionFailed(session, exception, expression, tuple, out isHandled);
+                _parent.RaiseActionFailed(session, exception, expression, activation, ref isHandled);
             }
         }
 
-        public void RaiseConditionFailed(ISession session, Exception exception, Expression expression, Tuple tuple, Fact fact)
+        public void RaiseConditionFailed(ISession session, Exception exception, Expression expression, Tuple tuple, Fact fact, ref bool isHandled)
         {
             var hanlder = ConditionFailedEvent;
             if (hanlder != null)
             {
                 var @event = new ConditionErrorEventArgs(exception, expression, tuple, fact);
                 hanlder(session, @event);
+                isHandled |= @event.IsHandled;
             }
             if (_parent != null)
             {
-                _parent.RaiseConditionFailed(session, exception, expression, tuple, fact);
+                _parent.RaiseConditionFailed(session, exception, expression, tuple, fact, ref isHandled);
             }
         }
     }

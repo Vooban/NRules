@@ -37,14 +37,14 @@ namespace NRules.Utilities
             {
                 var bx = (BinaryExpression)x;
                 var by = (BinaryExpression)y;
-                return bx.Method == @by.Method && ExpressionEqual(bx.Left, @by.Left, rootX, rootY) &&
+                return bx.Method == by.Method && ExpressionEqual(bx.Left, by.Left, rootX, rootY) &&
                        ExpressionEqual(bx.Right, @by.Right, rootX, rootY);
             }
             if (x is UnaryExpression)
             {
-                var bx = (UnaryExpression)x;
-                var by = (UnaryExpression)y;
-                return bx.Method == @by.Method && ExpressionEqual(bx.Operand, @by.Operand, rootX, rootY);
+                var ux = (UnaryExpression)x;
+                var uy = (UnaryExpression)y;
+                return ux.Method == uy.Method && ExpressionEqual(ux.Operand, uy.Operand, rootX, rootY);
             }
             if (x is ParameterExpression)
             {
@@ -62,16 +62,29 @@ namespace NRules.Utilities
             }
             if (x is InvocationExpression)
             {
-                var cx = (InvocationExpression)x;
-                var cy = (InvocationExpression)y;
-                return ExpressionEqual(cx.Expression, cy.Expression, rootX, rootY)
-                       && CollectionsEqual(cx.Arguments, cy.Arguments, rootX, rootY);
+                var ix = (InvocationExpression)x;
+                var iy = (InvocationExpression)y;
+                return ExpressionEqual(ix.Expression, iy.Expression, rootX, rootY)
+                       && CollectionsEqual(ix.Arguments, iy.Arguments, rootX, rootY);
+            }
+            if (x is NewExpression)
+            {
+                var nx = (NewExpression)x;
+                var ny = (NewExpression)y;
+                return nx.Constructor == ny.Constructor
+                       && CollectionsEqual(nx.Arguments, ny.Arguments, rootX, rootY);
             }
             if (x is ConstantExpression)
             {
                 var cx = (ConstantExpression)x;
                 var cy = (ConstantExpression)y;
                 return Equals(cx.Value, cy.Value);
+            }
+            if (x is TypeBinaryExpression)
+            {
+                var tbx = (TypeBinaryExpression)x;
+                var tby = (TypeBinaryExpression)y;
+                return Equals(tbx.TypeOperand, tby.TypeOperand);
             }
 
             throw new NotImplementedException(x.ToString());
@@ -88,11 +101,8 @@ namespace NRules.Utilities
 
         private static bool MemberExpressionsEqual(MemberExpression x, MemberExpression y, LambdaExpression rootX, LambdaExpression rootY)
         {
-            // Special case for static field and static property
-            if (x.Expression == null)
-            {
+            if (x.Expression == null || y.Expression == null)
                 return Equals(x.Member, y.Member);
-            }
 
             if (x.Expression.NodeType != y.Expression.NodeType)
                 return false;
@@ -105,6 +115,9 @@ namespace NRules.Utilities
                 case ExpressionType.Parameter:
                 case ExpressionType.MemberAccess:
                     return Equals(x.Member, y.Member) && ExpressionEqual(x.Expression, y.Expression, rootX, rootY);
+                case ExpressionType.New:
+                case ExpressionType.Call:
+                    return ExpressionEqual(x.Expression, y.Expression, rootX, rootY);
                 default:
                     throw new NotImplementedException(x.ToString());
             }

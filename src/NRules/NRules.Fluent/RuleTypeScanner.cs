@@ -9,19 +9,94 @@ namespace NRules.Fluent
     /// <summary>
     /// Assembly scanner that finds fluent rule classes.
     /// </summary>
-    public class RuleTypeScanner
+    public interface IRuleTypeScanner
     {
-        private readonly List<Type> _ruleTypes = new List<Type>();
-        private Func<IRuleMetadata, bool> _filter;
+        /// <summary>
+        /// Enables/disables discovery of private rule classes.
+        /// Default is off.
+        /// </summary>
+        /// <param name="include">Include private types if <c>true</c>, don't include otherwise.</param>
+        /// <returns>Rule type scanner to continue scanning specification.</returns>
+        IRuleTypeScanner PrivateTypes(bool include = true);
+
+        /// <summary>
+        /// Enables/disables discovery of nested rule classes.
+        /// Default is off.
+        /// </summary>
+        /// <param name="include">Include nested types if <c>true</c>, don't include otherwise.</param>
+        /// <returns>Rule type scanner to continue scanning specification.</returns>
+        IRuleTypeScanner NestedTypes(bool include = true);
 
         /// <summary>
         /// Finds rule types in the specified assemblies.
         /// </summary>
         /// <param name="assemblies">Assemblies to scan.</param>
         /// <returns>Rule type scanner to continue scanning specification.</returns>
-        public RuleTypeScanner Assembly(params Assembly[] assemblies)
+        IRuleTypeScanner Assembly(params Assembly[] assemblies);
+
+        /// <summary>
+        /// Finds rule types in the assembly of the specified type.
+        /// </summary>
+        /// <typeparam name="T">Type, whose assembly to scan.</typeparam>
+        /// <returns>Rule type scanner to continue scanning specification.</returns>
+        IRuleTypeScanner AssemblyOf<T>();
+
+        /// <summary>
+        /// Finds rule types in the assembly of the specified type.
+        /// </summary>
+        /// <param name="type">Type, whose assembly to scan.</param>
+        /// <returns>Rule type scanner to continue scanning specification.</returns>
+        IRuleTypeScanner AssemblyOf(Type type);
+
+        /// <summary>
+        /// Finds rule types in the specifies types.
+        /// </summary>
+        /// <param name="types">Types to scan.</param>
+        /// <returns>Rule type scanner to continue scanning specification.</returns>
+        IRuleTypeScanner Type(params Type[] types);
+    }
+
+    /// <summary>
+    /// Assembly scanner that finds fluent rule classes.
+    /// </summary>
+    public class RuleTypeScanner : IRuleTypeScanner
+    {
+        private readonly List<TypeInfo> _ruleTypes = new List<TypeInfo>();
+        private bool _nestedTypes = false;
+        private bool _privateTypes = false;
+
+        /// <summary>
+        /// Enables/disables discovery of private rule classes.
+        /// Default is off.
+        /// </summary>
+        /// <param name="include">Include private types if <c>true</c>, don't include otherwise.</param>
+        /// <returns>Rule type scanner to continue scanning specification.</returns>
+        public IRuleTypeScanner PrivateTypes(bool include = true)
         {
-            var ruleTypes = assemblies.SelectMany(a => a.GetTypes().Where(IsRuleType));
+            _privateTypes = include;
+            return this;
+        }
+
+        /// <summary>
+        /// Enables/disables discovery of nested rule classes.
+        /// Default is off.
+        /// </summary>
+        /// <param name="include">Include nested types if <c>true</c>, don't include otherwise.</param>
+        /// <returns>Rule type scanner to continue scanning specification.</returns>
+        public IRuleTypeScanner NestedTypes(bool include = true)
+        {
+            _nestedTypes = include;
+            return this;
+        }
+
+        /// <summary>
+        /// Finds rule types in the specified assemblies.
+        /// </summary>
+        /// <param name="assemblies">Assemblies to scan.</param>
+        /// <returns>Rule type scanner to continue scanning specification.</returns>
+        public IRuleTypeScanner Assembly(params Assembly[] assemblies)
+        {
+            var ruleTypes = assemblies.SelectMany(a => a.DefinedTypes.Where(IsRuleType));
             _ruleTypes.AddRange(ruleTypes);
             return this;
         }
@@ -31,7 +106,7 @@ namespace NRules.Fluent
         /// </summary>
         /// <typeparam name="T">Type, whose assembly to scan.</typeparam>
         /// <returns>Rule type scanner to continue scanning specification.</returns>
-        public RuleTypeScanner AssemblyOf<T>()
+        public IRuleTypeScanner AssemblyOf<T>()
         {
             return AssemblyOf(typeof(T));
         }
@@ -41,9 +116,10 @@ namespace NRules.Fluent
         /// </summary>
         /// <param name="type">Type, whose assembly to scan.</param>
         /// <returns>Rule type scanner to continue scanning specification.</returns>
-        public RuleTypeScanner AssemblyOf(Type type)
+        public IRuleTypeScanner AssemblyOf(Type type)
         {
-            return Assembly(type.Assembly);
+            var typeInfo = type.GetTypeInfo();
+            return Assembly(typeInfo.Assembly);
         }
 
         /// <summary>
@@ -51,25 +127,12 @@ namespace NRules.Fluent
         /// </summary>
         /// <param name="types">Types to scan.</param>
         /// <returns>Rule type scanner to continue scanning specification.</returns>
-        public RuleTypeScanner Type(params Type[] types)
+        public IRuleTypeScanner Type(params Type[] types)
         {
-            var ruleTypes = types.Where(IsRuleType);
+            var ruleTypes = types
+                .Select(x => x.GetTypeInfo())
+                .Where(IsRuleType);
             _ruleTypes.AddRange(ruleTypes);
-            return this;
-        }
-
-        /// <summary>
-        /// Filters rule types down based on rules' metadata.
-        /// </summary>
-        /// <param name="filter">Filter condition based on rule's metadata.</param>
-        /// <returns>Rule type scanner to continue scanning specification.</returns>
-        public RuleTypeScanner Where(Func<IRuleMetadata, bool> filter)
-        {
-            if (_filter != null)
-            {
-                throw new InvalidOperationException("Rule type scanner can only have a single 'Where' clause");
-            }
-            _filter = filter;
             return this;
         }
 
@@ -77,16 +140,12 @@ namespace NRules.Fluent
         /// Retrieves found types.
         /// </summary>
         /// <returns>Rule types.</returns>
-        public Type[] GetTypes()
+        public Type[] GetRuleTypes()
         {
-            var ruleTypes = _ruleTypes;
-            if (IsFilterSet())
-            {
-                var metadata = _ruleTypes.Select(ruleType => new RuleMetadata(ruleType));
-                var filteredTypes = metadata.Where(x => _filter(x)).Select(x => x.RuleType);
-                ruleTypes = filteredTypes.ToList();
-            }
-            return ruleTypes.ToArray();
+            var ruleTypes = _ruleTypes
+                .Where(t => _privateTypes || !t.IsNotPublic)
+                .Where(t => _nestedTypes || !t.IsNested);
+            return ruleTypes.Select(x => x.AsType()).ToArray();
         }
 
         /// <summary>
@@ -96,25 +155,26 @@ namespace NRules.Fluent
         /// <returns>Result of the check.</returns>
         public static bool IsRuleType(Type type)
         {
-            if (IsPublicConcrete(type) &&
-                typeof(Rule).IsAssignableFrom(type)) return true;
+            return IsRuleType(type.GetTypeInfo());
+        }
+
+        private static bool IsRuleType(TypeInfo typeInfo)
+        {
+            var ruleType = typeof(Rule).GetTypeInfo();
+            if (IsConcrete(typeInfo) &&
+                ruleType.IsAssignableFrom(typeInfo))
+                return true;
 
             return false;
         }
 
-        private static bool IsPublicConcrete(Type type)
+        private static bool IsConcrete(TypeInfo typeInfo)
         {
-            if (!type.IsPublic) return false;
-            if (type.IsAbstract) return false;
-            if (type.IsInterface) return false;
-            if (type.IsGenericTypeDefinition) return false;
+            if (typeInfo.IsAbstract) return false;
+            if (typeInfo.IsInterface) return false;
+            if (typeInfo.IsGenericTypeDefinition) return false;
 
             return true;
-        }
-
-        internal bool IsFilterSet()
-        {
-            return _filter != null;
         }
     }
 }

@@ -1,4 +1,6 @@
-﻿namespace NRules.Rete
+﻿using System.Collections.Generic;
+
+namespace NRules.Rete
 {
     internal interface ITerminalNode
     {
@@ -7,10 +9,10 @@
 
     internal class TerminalNode : ITerminalNode, ITupleSink
     {
-        private readonly FactIndexMap _factIndexMap;
+        private readonly IndexMap _factIndexMap;
         private IRuleNode _ruleNode;
 
-        public FactIndexMap FactIndexMap
+        public IndexMap FactIndexMap
         {
             get { return _factIndexMap; }
         }
@@ -20,25 +22,34 @@
             get { return _ruleNode; }
         }
 
-        public TerminalNode(ITupleSource source, FactIndexMap factIndexMap)
+        public TerminalNode(ITupleSource source, IndexMap factIndexMap)
         {
             _factIndexMap = factIndexMap;
             source.Attach(this);
         }
 
-        public void PropagateAssert(IExecutionContext context, Tuple tuple)
+        public void PropagateAssert(IExecutionContext context, IList<Tuple> tuples)
         {
-            RuleNode.Activate(context, tuple, _factIndexMap);
+            foreach (var tuple in tuples)
+            {
+                RuleNode.Activate(context, tuple, _factIndexMap);
+            }
         }
 
-        public void PropagateUpdate(IExecutionContext context, Tuple tuple)
+        public void PropagateUpdate(IExecutionContext context, IList<Tuple> tuples)
         {
-            RuleNode.Activate(context, tuple, _factIndexMap);
+            foreach (var tuple in tuples)
+            {
+                RuleNode.Reactivate(context, tuple, _factIndexMap);
+            }
         }
 
-        public void PropagateRetract(IExecutionContext context, Tuple tuple)
+        public void PropagateRetract(IExecutionContext context, IList<Tuple> tuples)
         {
-            RuleNode.Deactivate(context, tuple, _factIndexMap);
+            foreach (var tuple in tuples)
+            {
+                RuleNode.Deactivate(context, tuple, _factIndexMap);
+            }
         }
 
         public void Attach(IRuleNode ruleNode)
